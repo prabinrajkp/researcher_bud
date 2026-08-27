@@ -1,0 +1,34 @@
+Systematic Literature Review - Articles Log
+Project: Test Project
+Generated: 2026-08-27T10:18:06.545055
+================================================================================
+
+
+## SCREENING STAGE (3 articles)
+----------------------------------------
+[○] Test Article 0
+    Link: https://example.com/0
+    ID: art_0
+
+[○] Test Article 1
+    Link: https://example.com/1
+    ID: art_1
+
+[○] Test Article 2
+    Link: https://example.com/2
+    ID: art_2
+
+
+## ELIGIBILITY STAGE (2 articles)
+----------------------------------------
+[○] Test Article 3
+    Link: https://example.com/3
+    ID: art_3
+
+[○] Test Article 4
+    Link: https://example.com/4
+    ID: art_4
+
+
+## INCLUSION STAGE (0 articles)
+----------------------------------------
