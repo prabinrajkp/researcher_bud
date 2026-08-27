@@ -1,43 +1,23 @@
 """
 Academic Article Crawler for Systematic Literature Review
-Scrapes articles from PubMed, Google Scholar, and other academic sources
+Supports PubMed, CrossRef, and arXiv APIs
 """
-
 import requests
 import re
-import time
-import hashlib
-from typing import Dict, List, Optional, Any
+from typing import List, Dict, Optional
 from datetime import datetime
-from urllib.parse import quote_plus, urlparse
-import json
+import time
 
 
 class AcademicCrawler:
-    """
-    Crawler for fetching academic articles from various sources.
-    Uses free APIs and respectful scraping practices.
-    """
-    
-    def __init__(self, delay: float = 1.0):
-        self.delay = delay  # Delay between requests (seconds)
+    def __init__(self):
         self.session = requests.Session()
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'User-Agent': 'SystematicReviewBot/1.0 (academic research)'
         })
-        self.results_cache = {}
     
-    def search_pubmed(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
-        """
-        Search PubMed using E-utilities API (free, no key required for basic use).
-        
-        Args:
-            query: Search query string
-            max_results: Maximum number of results to return
-            
-        Returns:
-            List of article dictionaries
-        """
+    def search_pubmed(self, query: str, max_results: int = 50) -> List[Dict]:
+        """Search PubMed using E-utilities API"""
         articles = []
         
         try:
@@ -53,66 +33,90 @@ class AcademicCrawler:
             
             response = self.session.get(search_url, params=search_params, timeout=30)
             response.raise_for_status()
-            search_data = response.json()
+            data = response.json()
             
-            ids = search_data.get('esearchresult', {}).get('idlist', [])
+            if 'esearchresult' not in data or 'idlist' not in data['esearchresult']:
+                return articles
+            
+            ids = data['esearchresult']['idlist'][:max_results]
             
             if not ids:
                 return articles
             
-            # Step 2: Fetch details for each ID
+            # Step 2: Fetch details
             fetch_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+            fetch_params = {
+                'db': 'pubmed',
+                'id': ','.join(ids),
+                'retmode': 'json'
+            }
             
-            # Process in batches of 10
-            for i in range(0, len(ids), 10):
-                batch_ids = ids[i:i+10]
+            response = self.session.get(fetch_url, params=fetch_params, timeout=30)
+            response.raise_for_status()
+            data = response.json()
+            
+            if 'result' not in data:
+                return articles
+            
+            for pmid in ids:
+                if pmid not in data['result']:
+                    continue
                 
-                params = {
-                    'db': 'pubmed',
-                    'id': ','.join(batch_ids),
-                    'retmode': 'json'
+                paper = data['result'][pmid]
+                
+                # Extract authors
+                authors = []
+                if 'authors' in paper:
+                    for author in paper['authors'][:5]:  # Limit to first 5
+                        if 'name' in author:
+                            authors.append(author['name'])
+                        elif 'lastname' in author:
+                            name = author['lastname']
+                            if 'firstname' in author:
+                                name += f" {author['firstname']}"
+                            authors.append(name)
+                
+                article = {
+                    'title': paper.get('title', ''),
+                    'abstract': '',  # Need separate fetch for abstract
+                    'authors': '; '.join(authors),
+                    'journal': paper.get('fulljournalname', ''),
+                    'year': int(paper.get('pubdate', '0')[:4]) if paper.get('pubdate') else None,
+                    'doi': paper.get('doi', ''),
+                    'url': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
+                    'source': 'PubMed',
+                    'pmid': pmid,
+                    'pdf_url': ''
                 }
                 
-                response = self.session.get(fetch_url, params=params, timeout=30)
-                response.raise_for_status()
-                summary_data = response.json()
+                # Fetch abstract separately
+                if pmid:
+                    abstract_url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+                    abstract_params = {
+                        'db': 'pubmed',
+                        'id': pmid,
+                        'retmode': 'json'
+                    }
+                    try:
+                        abs_response = self.session.get(abstract_url, params=abstract_params, timeout=10)
+                        if abs_response.ok:
+                            abs_data = abs_response.json()
+                            if 'result' in abs_data and pmid in abs_data['result']:
+                                article['abstract'] = abs_data['result'][pmid].get('abstract', '')
+                    except:
+                        pass
                 
-                result = summary_data.get('result', {})
-                
-                for pmid in batch_ids:
-                    if pmid in result:
-                        article = result[pmid]
-                        articles.append({
-                            'id': f"pubmed_{pmid}",
-                            'title': article.get('title', ''),
-                            'authors': ', '.join(article.get('authors', [])),
-                            'journal': article.get('fulljournalname', ''),
-                            'publication_year': article.get('pubdate', '')[:4] if article.get('pubdate') else None,
-                            'doi': article.get('doi', ''),
-                            'link': f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
-                            'abstract': article.get('abstract', ''),
-                            'source': 'PubMed',
-                            'pmid': pmid
-                        })
-                
-                time.sleep(self.delay)
+                articles.append(article)
+                time.sleep(0.1)  # Rate limiting
+            
+            return articles
             
         except Exception as e:
             print(f"PubMed search error: {e}")
-        
-        return articles
+            return articles
     
-    def search_doi_crossref(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
-        """
-        Search Crossref DOI database (free API).
-        
-        Args:
-            query: Search query string
-            max_results: Maximum number of results
-            
-        Returns:
-            List of article dictionaries
-        """
+    def search_crossref(self, query: str, max_results: int = 50) -> List[Dict]:
+        """Search CrossRef API"""
         articles = []
         
         try:
@@ -120,124 +124,68 @@ class AcademicCrawler:
             params = {
                 'query': query,
                 'rows': max_results,
-                'select': 'DOI,title,author,container-title,published,abstract,URL,is-referenced-by-count'
+                'select': 'DOI,title,author,container-title,published,URL,is-referenced-by-count',
+                'sort': 'relevance'
             }
             
             response = self.session.get(url, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
             
-            items = data.get('message', {}).get('items', [])
+            if 'message' not in data or 'items' not in data['message']:
+                return articles
             
-            for item in items:
+            for item in data['message']['items']:
                 # Extract authors
                 authors = []
                 if 'author' in item:
-                    for author in item['author']:
-                        given = author.get('given', '')
-                        family = author.get('family', '')
-                        if given or family:
-                            authors.append(f"{given} {family}".strip())
+                    for author in item['author'][:5]:
+                        name_parts = []
+                        if 'given' in author:
+                            name_parts.append(author['given'])
+                        if 'family' in author:
+                            name_parts.append(author['family'])
+                        if name_parts:
+                            authors.append(' '.join(name_parts))
                 
                 # Extract year
-                pub_year = None
+                year = None
                 if 'published' in item and 'date-parts' in item['published']:
-                    date_parts = item['published']['date-parts'][0]
-                    if len(date_parts) > 0:
-                        pub_year = date_parts[0]
+                    date_parts = item['published']['date-parts']
+                    if date_parts and len(date_parts[0]) > 0:
+                        year = date_parts[0][0]
                 
-                articles.append({
-                    'id': f"crossref_{hashlib.md5(item.get('DOI', '').encode()).hexdigest()[:12]}",
+                article = {
                     'title': item.get('title', [''])[0],
-                    'authors': ', '.join(authors),
-                    'journal': item.get('container-title', [''])[0] if item.get('container-title') else '',
-                    'publication_year': pub_year,
-                    'doi': item.get('DOI', ''),
-                    'link': item.get('URL', ''),
                     'abstract': item.get('abstract', ''),
+                    'authors': '; '.join(authors),
+                    'journal': item.get('container-title', [''])[0] if item.get('container-title') else '',
+                    'year': year,
+                    'doi': item.get('DOI', ''),
+                    'url': item.get('URL', ''),
                     'source': 'CrossRef',
-                    'citation_count': item.get('is-referenced-by-count', 0)
-                })
+                    'pdf_url': ''
+                }
                 
+                articles.append(article)
+            
+            return articles
+            
         except Exception as e:
             print(f"CrossRef search error: {e}")
-        
-        return articles
-    
-    def search_core_api(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
-        """
-        Search CORE API (free tier available, requires registration for higher limits).
-        Falls back to mock data if no API key.
-        
-        Args:
-            query: Search query
-            max_results: Maximum results
-            
-        Returns:
-            List of article dictionaries
-        """
-        api_key = ""  # User can set their own CORE API key
-        
-        articles = []
-        
-        if not api_key:
-            # Return empty list - user needs to add their own API key
-            print("CORE API key not set. Skipping CORE search.")
             return articles
-        
-        try:
-            url = "https://api.core.ac.uk/v3/search/outputs"
-            headers = {
-                'Authorization': f'Bearer {api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            payload = {
-                'query': query,
-                'limit': max_results
-            }
-            
-            response = self.session.post(url, headers=headers, json=payload, timeout=30)
-            response.raise_for_status()
-            data = response.json()
-            
-            results = data.get('results', [])
-            
-            for item in results:
-                articles.append({
-                    'id': f"core_{item.get('id', hashlib.md5(str(time.time()).encode()).hexdigest()[:12])}",
-                    'title': item.get('title', ''),
-                    'authors': ', '.join(item.get('authors', [])),
-                    'journal': item.get('publisher', ''),
-                    'publication_year': item.get('yearPublished'),
-                    'doi': item.get('doi', ''),
-                    'link': item.get('sourceFulltextUrls', [item.get('browserUrl', '')])[0] if item.get('sourceFulltextUrls') else item.get('browserUrl', ''),
-                    'abstract': item.get('abstractTexts', [''])[0] if item.get('abstractTexts') else '',
-                    'source': 'CORE'
-                })
-                
-        except Exception as e:
-            print(f"CORE API search error: {e}")
-        
-        return articles
     
-    def crawl_arxiv(self, query: str, max_results: int = 50) -> List[Dict[str, Any]]:
-        """
-        Search arXiv preprint server (free API).
-        
-        Args:
-            query: Search query
-            max_results: Maximum results
-            
-        Returns:
-            List of article dictionaries
-        """
+    def search_arxiv(self, query: str, max_results: int = 50) -> List[Dict]:
+        """Search arXiv API"""
         articles = []
         
         try:
+            # Clean query for arXiv
+            clean_query = re.sub(r'[^\w\s]', ' ', query)
+            
             url = "http://export.arxiv.org/api/query"
             params = {
-                'search_query': f'all:{query}',
+                'search_query': f'all:{clean_query}',
                 'start': 0,
                 'max_results': max_results,
                 'sortBy': 'relevance',
@@ -251,202 +199,150 @@ class AcademicCrawler:
             import xml.etree.ElementTree as ET
             root = ET.fromstring(response.content)
             
-            # Namespace for Atom feed
-            ns = {'atom': 'http://www.w3.org/2005/Atom',
-                  'arxiv': 'http://arxiv.org/schemas/atom'}
+            # Namespace
+            ns = {'atom': 'http://www.w3.org/2005/Atom'}
             
-            for entry in root.findall('atom:entry', ns):
+            entries = root.findall('atom:entry', ns)
+            
+            for entry in entries:
+                # Extract title
                 title_elem = entry.find('atom:title', ns)
-                summary_elem = entry.find('atom:summary', ns)
-                published_elem = entry.find('atom:published', ns)
-                id_elem = entry.find('atom:id', ns)
-                
-                # Get authors
-                authors = []
-                for author in entry.findall('atom:author', ns):
-                    name_elem = author.find('atom:name', ns)
-                    if name_elem is not None:
-                        authors.append(name_elem.text)
-                
                 title = title_elem.text.strip() if title_elem is not None else ''
-                summary = summary_elem.text.strip() if summary_elem is not None else ''
-                published = published_elem.text[:10] if published_elem is not None else ''
-                arxiv_id = id_elem.text if id_elem is not None else ''
                 
-                articles.append({
-                    'id': f"arxiv_{hashlib.md5(arxiv_id.encode()).hexdigest()[:12]}",
+                # Extract summary (abstract)
+                summary_elem = entry.find('atom:summary', ns)
+                abstract = summary_elem.text.strip() if summary_elem is not None else ''
+                
+                # Extract authors
+                authors = []
+                for author_elem in entry.findall('atom:author', ns):
+                    name_elem = author_elem.find('atom:name', ns)
+                    if name_elem is not None and name_elem.text:
+                        authors.append(name_elem.text.strip())
+                
+                # Extract published date
+                published_elem = entry.find('atom:published', ns)
+                year = None
+                if published_elem is not None and published_elem.text:
+                    try:
+                        year = int(published_elem.text[:4])
+                    except:
+                        pass
+                
+                # Extract DOI if available
+                doi_elem = entry.find('arxiv:doi', {'arxiv': 'http://arxiv.org/schemas/atom'})
+                doi = doi_elem.text if doi_elem is not None else ''
+                
+                # Get PDF URL
+                pdf_url = ''
+                for link_elem in entry.findall('atom:link', ns):
+                    if link_elem.get('type') == 'application/pdf':
+                        pdf_url = link_elem.get('href', '')
+                        break
+                
+                # Get arXiv ID and URL
+                id_elem = entry.find('atom:id', ns)
+                arxiv_url = id_elem.text if id_elem is not None else ''
+                
+                article = {
                     'title': title,
-                    'authors': ', '.join(authors),
+                    'abstract': abstract,
+                    'authors': '; '.join(authors[:5]),
                     'journal': 'arXiv',
-                    'publication_year': published[:4] if published else None,
-                    'doi': '',
-                    'link': arxiv_id,
-                    'abstract': summary,
-                    'source': 'arXiv'
-                })
+                    'year': year,
+                    'doi': doi,
+                    'url': arxiv_url,
+                    'source': 'arXiv',
+                    'pdf_url': pdf_url
+                }
                 
-                if len(articles) >= max_results:
-                    break
-                
+                articles.append(article)
+            
+            return articles
+            
         except Exception as e:
             print(f"arXiv search error: {e}")
-        
-        return articles
+            return articles
     
-    def multi_source_search(self, query: str, sources: List[str] = None,
-                           max_per_source: int = 30) -> Dict[str, List[Dict[str, Any]]]:
-        """
-        Search multiple sources simultaneously.
+    def search(self, query: str, sources: List[str] = ['PubMed', 'CrossRef', 'arXiv'], 
+               max_results_per_source: int = 50) -> List[Dict]:
+        """Search multiple sources and combine results"""
+        all_articles = []
         
-        Args:
-            query: Search query
-            sources: List of sources to search (default: all)
-            max_per_source: Max results per source
-            
-        Returns:
-            Dictionary with source names as keys and article lists as values
-        """
-        if sources is None:
-            sources = ['pubmed', 'crossref', 'arxiv']
+        if 'PubMed' in sources:
+            pubmed_articles = self.search_pubmed(query, max_results_per_source)
+            all_articles.extend(pubmed_articles)
+            time.sleep(0.5)  # Rate limiting between sources
         
-        results = {}
+        if 'CrossRef' in sources:
+            crossref_articles = self.search_crossref(query, max_results_per_source)
+            all_articles.extend(crossref_articles)
+            time.sleep(0.5)
         
-        if 'pubmed' in sources:
-            print(f"Searching PubMed for: {query}")
-            results['pubmed'] = self.search_pubmed(query, max_per_source)
-            time.sleep(self.delay)
+        if 'arXiv' in sources:
+            arxiv_articles = self.search_arxiv(query, max_results_per_source)
+            all_articles.extend(arxiv_articles)
         
-        if 'crossref' in sources:
-            print(f"Searching CrossRef for: {query}")
-            results['crossref'] = self.search_doi_crossref(query, max_per_source)
-            time.sleep(self.delay)
+        # Remove duplicates based on DOI or title similarity
+        unique_articles = self._deduplicate(all_articles)
         
-        if 'arxiv' in sources:
-            print(f"Searching arXiv for: {query}")
-            results['arxiv'] = self.crawl_arxiv(query, max_per_source)
-            time.sleep(self.delay)
-        
-        if 'core' in sources:
-            print(f"Searching CORE for: {query}")
-            results['core'] = self.search_core_api(query, max_per_source)
-        
-        return results
+        return unique_articles
     
-    def deduplicate_articles(self, articles: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Remove duplicate articles based on title similarity and DOI.
-        
-        Args:
-            articles: List of article dictionaries
-            
-        Returns:
-            Deduplicated list
-        """
+    def _deduplicate(self, articles: List[Dict]) -> List[Dict]:
+        """Remove duplicate articles"""
         seen_dois = set()
         seen_titles = set()
         unique = []
         
         for article in articles:
             doi = article.get('doi', '').lower()
-            title = re.sub(r'[^\w\s]', '', article.get('title', '').lower()).strip()
+            title = article.get('title', '').lower().strip()
             
             # Skip if DOI already seen
             if doi and doi in seen_dois:
                 continue
             
-            # Skip if title too similar to existing
-            if title in seen_titles:
+            # Skip if title is very similar (simple check)
+            title_key = title[:50] if len(title) > 50 else title
+            if title_key and title_key in seen_titles:
                 continue
             
-            seen_dois.add(doi)
-            seen_titles.add(title)
+            if doi:
+                seen_dois.add(doi)
+            if title_key:
+                seen_titles.add(title_key)
+            
             unique.append(article)
         
         return unique
     
-    def save_to_file(self, articles: List[Dict[str, Any]], filepath: str,
-                    format: str = 'json') -> bool:
-        """
-        Save articles to file.
+    def fetch_full_text(self, article: Dict) -> Optional[str]:
+        """Attempt to fetch full text if available"""
+        # This is a simplified version - full text fetching often requires subscriptions
+        url = article.get('pdf_url') or article.get('url')
         
-        Args:
-            articles: List of articles
-            filepath: Output file path
-            format: 'json' or 'csv'
-            
-        Returns:
-            True if successful
-        """
+        if not url:
+            return None
+        
         try:
-            if format == 'json':
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    json.dump(articles, f, indent=2, ensure_ascii=False)
-            elif format == 'csv':
-                import csv
-                if articles:
-                    keys = articles[0].keys()
-                    with open(filepath, 'w', newline='', encoding='utf-8') as f:
-                        writer = csv.DictWriter(f, fieldnames=keys)
-                        writer.writeheader()
-                        writer.writerows(articles)
-            
-            print(f"Saved {len(articles)} articles to {filepath}")
-            return True
+            response = self.session.get(url, timeout=30)
+            if response.ok:
+                # Check if it's PDF
+                content_type = response.headers.get('Content-Type', '')
+                if 'application/pdf' in content_type:
+                    return "[PDF Document - Text extraction not implemented]"
+                else:
+                    # Try to extract text from HTML
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(response.text, 'html.parser')
+                    
+                    # Remove scripts and styles
+                    for script in soup(['script', 'style']):
+                        script.decompose()
+                    
+                    text = soup.get_text(separator=' ', strip=True)
+                    return text[:10000]  # Limit length
         except Exception as e:
-            print(f"Error saving articles: {e}")
-            return False
-    
-    def generate_search_queries(self, topic: str, keywords: List[str] = None) -> List[str]:
-        """
-        Generate optimized search queries for academic databases.
+            print(f"Full text fetch error: {e}")
         
-        Args:
-            topic: Main research topic
-            keywords: Additional keywords
-            
-        Returns:
-            List of search queries
-        """
-        queries = []
-        
-        # Basic query
-        queries.append(topic)
-        
-        # With Boolean operators
-        if keywords:
-            kw_string = ' OR '.join(keywords)
-            queries.append(f"{topic} AND ({kw_string})")
-            
-            # Phrase searching
-            queries.append(f'"{topic}"')
-            
-            # Field-specific (for PubMed)
-            queries.append(f'{topic}[Title/Abstract]')
-        
-        return queries
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    crawler = AcademicCrawler(delay=1.0)
-    
-    # Test search
-    test_query = "maternal health sub-saharan africa"
-    
-    print(f"\nTesting search for: {test_query}\n")
-    
-    # Multi-source search
-    results = crawler.multi_source_search(test_query, max_per_source=5)
-    
-    for source, articles in results.items():
-        print(f"\n{source.upper()}: Found {len(articles)} articles")
-        for i, article in enumerate(articles[:3], 1):
-            print(f"  {i}. {article.get('title', 'No title')[:80]}...")
-    
-    # Deduplication test
-    all_articles = []
-    for articles in results.values():
-        all_articles.extend(articles)
-    
-    unique = crawler.deduplicate_articles(all_articles)
-    print(f"\nTotal: {len(all_articles)}, Unique: {len(unique)}")
+        return None

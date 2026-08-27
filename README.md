@@ -1,52 +1,58 @@
 # Systematic Literature Review Assistant
 
-A human-AI collaborative system for conducting systematic literature reviews with PRISMA compliance. Built with Streamlit, SQLite, and free LLM models via OmniRoute/OpenRouter.
+A human-AI collaborative system for conducting systematic literature reviews with automated article discovery, AI-powered screening, and PRISMA-compliant reporting.
 
 ## Features
 
-- **🔍 Academic Database Search**: Crawl PubMed, CrossRef, and arXiv for relevant articles
-- **🤖 AI Judge**: Provides summary points and inclusion/exclusion recommendations using free LLM models
-- **👤 Human Researcher**: Final decision maker with override capability
-- **📊 PRISMA Flow**: Automatic tracking of screening → eligibility → inclusion stages
-- **💾 Dual Storage**: Auto-cache + manual "Save Permanently" button
-- **📝 Article Logging**: Stores names and links in organized documents
-- **🗄️ SQLite Database**: Persistent storage for projects and articles
-- **🐳 Docker Ready**: Containerized deployment option
+### 🤖 AI Agent Capabilities
+- **Automated Article Discovery**: Searches PubMed, CrossRef, and arXiv using academic APIs
+- **Intelligent Screening**: Provides bullet-point summaries and inclusion/exclusion recommendations
+- **Clarification Questions**: Generates questions to refine review scope when starting a project
+- **PRISMA Summary Generation**: Drafts results section text based on included studies
+- **Free Models**: Uses `google/gemma-2-9b-it:free` via OpenRouter (no cost)
+
+### 👤 Human Researcher Controls
+- Final decision authority on all articles
+- Override AI recommendations
+- Add notes and annotations
+- Filter by stage (identified, screening, eligibility, included, excluded)
+- Single article or list view modes
+
+### 💾 Data Management
+- **SQLite Database**: Persistent local storage
+- **Dual Storage System**: Auto-cache + manual "Save Permanently" button
+- **Article Logging**: Export articles with names, links, decisions to text files
+- **Audit Trail**: All decisions tracked in database
+- **PRISMA Flow**: Automatic statistics generation
 
 ## Quick Start
 
 ### Local Installation
 
-1. Install dependencies:
 ```bash
+# Install dependencies
 pip install -r requirements.txt
-```
 
-2. Set up OpenRouter API key (optional, for real AI):
-```bash
-export OPENROUTER_API_KEY="your-api-key-here"
-```
+# Set your OpenRouter API key (optional, works without for mock mode)
+export OPENROUTER_API_KEY="your-api-key"
 
-3. Run the application:
-```bash
+# Run the application
 streamlit run app.py
 ```
 
-4. Open http://localhost:8501 in your browser
+The app opens at `http://localhost:8501`
 
-### Docker Installation
+### Docker Deployment
 
-1. Build the image:
 ```bash
-docker build -t review-system .
-```
+# Build the image
+docker build -t systematic-review-assistant .
 
-2. Run the container:
-```bash
+# Run the container
 docker run -p 8501:8501 \
-  -e OPENROUTER_API_KEY="your-key" \
-  -v $(pwd)/review_projects:/app/review_projects \
-  review-system
+  -e OPENROUTER_API_KEY="your-api-key" \
+  -v $(pwd)/data:/app/data \
+  systematic-review-assistant
 ```
 
 ## Usage Workflow
@@ -54,161 +60,144 @@ docker run -p 8501:8501 \
 ### 1. Start New Project
 - Enter review title and description
 - Define inclusion/exclusion criteria
-- Answer clarification questions to refine scope
+- AI generates 8 clarification questions
+- Answer questions to refine criteria
 
-### 2. Add Articles
-Choose from four methods:
-- **Single Article**: Manual entry of title, link, abstract
-- **Batch Import**: Paste CSV-formatted data
-- **Search Databases**: Query PubMed, CrossRef, arXiv directly
-- **From File**: Upload CSV files
+### 2. AI Agent Search
+- Enter search query (auto-populated from project title)
+- Select sources: PubMed, CrossRef, arXiv
+- Set maximum results (default: 50)
+- Click "Search & Import Articles"
+- Agent crawls databases and deduplicates results
 
 ### 3. Review Articles
-- AI analyzes each article and provides:
-  - Summary (3-4 bullet points)
-  - Recommendation (INCLUDE/EXCLUDE/UNCERTAIN)
-  - Confidence score (0-100%)
-  - Suggested PRISMA stage
-- Human researcher makes final decision
-- Can accept or override AI recommendation
+**AI Judge Panel:**
+- Bullet-point summary (population, methods, outcomes)
+- Recommendation: Include/Exclude/Needs Review
+- Confidence score (0-100%)
+- Reasoning explanation
 
-### 4. Save Progress
-- Cache auto-saves after each action
-- Click "Save Permanently" to commit to database
-- Articles log exported automatically
+**Human Decision:**
+- ✅ Include → Moves to included studies
+- ❌ Exclude → Specify reason (title/abstract or full-text)
+- ⏳ Defer → Flag for later review
+- Add personal notes
 
-### 5. Generate PRISMA Summary
-- View counts for each stage
-- Export draft text for results section
-- Download articles log with names and links
+### 4. PRISMA Summary
+- View flow diagram with counts
+- Metrics: Identified, Screened, Full-Text Assessed, Included
+- Generate draft Results section text
+- Download for manuscript
+
+### 5. Data Management
+- Cache status indicator
+- "Save Permanently" button
+- Export articles log (TXT)
+- Export PRISMA stats (JSON)
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                  Streamlit Frontend                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
-│  │  Project │  │  Article │  │   Review         │  │
-│  │  Setup   │  │  Import  │  │   Interface      │  │
-│  └──────────┘  └──────────┘  └──────────────────┘  │
-└─────────────────────────────────────────────────────┘
-                         │
-        ┌────────────────┼────────────────┐
-        │                │                │
-        ▼                ▼                ▼
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│ ReviewAgent  │ │  Database    │ │  Crawler     │
-│ (AI Judge)   │ │  Manager     │ │  (Scraper)   │
-│              │ │  (SQLite)    │ │              │
-│ - Summarize  │ │ - Projects   │ │ - PubMed     │
-│ - Recommend  │ │ - Articles   │ │ - CrossRef   │
-│ - Classify   │ │ - Metadata   │ │ - arXiv      │
-└──────────────┘ └──────────────┘ └──────────────┘
-        │
-        ▼
-┌──────────────┐
-│ OmniRoute    │
-│ LLM Client   │
-│ (Free Models)│
-└──────────────┘
+┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+│   Streamlit UI  │────▶│  Review Agent    │────▶│  OpenRouter API │
+│   (Frontend)    │◀────│  (AI Judge)      │◀────│  (Free LLMs)    │
+└────────┬────────┘     └──────────────────┘     └─────────────────┘
+         │
+         ▼
+┌─────────────────┐     ┌──────────────────┐
+│   Database      │◀────│  Academic        │
+│   (SQLite)      │     │  Crawler         │
+└─────────────────┘     └──────────────────┘
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+         ┌─────────┐   ┌───────────┐   ┌─────────┐
+         │ PubMed  │   │ CrossRef  │   │  arXiv  │
+         └─────────┘   └───────────┘   └─────────┘
 ```
 
 ## File Structure
 
 ```
 /workspace/
-├── app.py                 # Streamlit frontend
-├── review_agent.py        # AI agent and cache management
-├── database.py            # SQLite database manager
-├── crawler.py             # Academic article crawler
-├── requirements.txt       # Python dependencies
-├── Dockerfile            # Docker configuration
-├── README.md             # This file
-└── review_projects/      # Project data storage
-    └── [Project Name]/
-        ├── cache.json           # Auto-save cache
-        ├── saved_reviews.json   # Permanent storage
-        └── articles_log.txt     # Article names and links
+├── app.py              # Streamlit frontend
+├── database.py         # SQLite database manager
+├── crawler.py          # Academic article crawler
+├── review_agent.py     # AI review agent
+├── requirements.txt    # Python dependencies
+├── Dockerfile          # Docker configuration
+├── README.md           # This file
+└── review_system.db    # SQLite database (created on first run)
 ```
 
-## Database Schema
+## Configuration
 
-### Tables
-- **projects**: Review project metadata
-- **articles**: Article details and review decisions
-- **article_metadata**: Scraped metadata (authors, journal, etc.)
-- **crawl_queue**: Background crawl jobs
-- **review_logs**: Audit trail of decisions
+### Environment Variables
 
-## AI Models
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `OPENROUTER_API_KEY` | OpenRouter API key for AI features | No* |
 
-The system uses free models from OpenRouter:
-- Default: `google/gemma-2-9b-it:free`
-- Fallback: Mock responses (demo mode)
+*App works in mock mode without API key (shows placeholder analysis)
 
-To use a different free model, edit `review_agent.py`:
+### Free Model Selection
+
+The system uses `google/gemma-2-9b-it:free` by default. Other free models available via OpenRouter:
+
+- `google/gemma-2-9b-it:free` (default)
+- `meta-llama/llama-3-8b-instruct:free`
+- `mistralai/mistral-7b-instruct:free`
+
+Edit `review_agent.py` to change:
 ```python
-payload = {
-    "model": "meta-llama/llama-3-8b-instruct:free",  # Alternative free model
-    ...
-}
+self.model = "google/gemma-2-9b-it:free"  # Change this line
 ```
 
 ## PRISMA Compliance
 
-The system tracks all stages required for PRISMA flow diagrams:
+The system tracks all stages required for PRISMA 2020 reporting:
+
 1. **Identification**: Records from databases
 2. **Screening**: Title/abstract review
 3. **Eligibility**: Full-text assessment
-4. **Included**: Final studies in review
+4. **Included**: Studies in final synthesis
 
-Results section draft is auto-generated with placeholders for:
-- Number of records at each stage
-- Geographic distribution
-- Publication years
-- Sample sizes
-- Data sources
-- Risk of bias assessments
+Auto-generated text follows this template:
+> "The search yielded [X] records after duplicate removal. After title/abstract screening, [X] full texts were assessed for eligibility. [X] studies met inclusion criteria..."
 
-## Customization
+## Batch Processing
 
-### Adding New Data Sources
-Edit `crawler.py` to add new search functions:
-```python
-def search_new_source(self, query: str, max_results: int = 50):
-    # Implement API call or scraping logic
-    pass
-```
+For large reviews (300-400+ articles):
 
-### Modifying AI Prompts
-Edit the `_create_system_prompt()` method in `ReviewAgent` class to customize how the AI evaluates articles based on your specific criteria.
+1. Use batch search with multiple queries
+2. Enable "Show Unanalyzed First" in review tab
+3. AI analyzes articles on-demand
+4. Progress bar tracks completion
+5. Export anytime for backup
 
-### Changing Storage Location
-Modify the `base_dir` in `CacheManager.__init__()` or set environment variable `REVIEW_PROJECTS_DIR`.
+## API Rate Limits
+
+- PubMed: ~3 requests/second (built-in throttling)
+- CrossRef: Polite pool (no key needed)
+- arXiv: 1 request/second recommended
+- OpenRouter: Depends on model (free models have limits)
 
 ## Troubleshooting
 
-**No AI responses?**
-- Check if `OPENROUTER_API_KEY` is set
+### No AI Analysis
+- Check `OPENROUTER_API_KEY` environment variable
 - Verify internet connectivity
-- The system will fall back to mock mode if API fails
+- Try different free model in `review_agent.py`
 
-**Database errors?**
-- Ensure write permissions in `/workspace`
-- Check if `review_system.db` is not corrupted
+### Search Returns No Results
+- Simplify search query
+- Check source selection
+- Verify API endpoints accessible
 
-**Docker build fails?**
-- Make sure `requirements.txt` exists
-- Try: `docker build --no-cache -t review-system .`
+### Database Errors
+- Delete `review_system.db` to reset
+- Check write permissions in `/workspace`
 
 ## License
 
 MIT License - Free for academic and commercial use.
-
-## Citation
-
-If you use this tool in your research, please cite:
-```
-Systematic Literature Review Assistant v1.0. 
-Available at: https://github.com/your-repo/review-system
-```
