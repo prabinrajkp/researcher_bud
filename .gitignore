@@ -24,7 +24,6 @@ venv/
 .idea/
 *.swp
 *.swo
-*.tmp
 
 # Build/compiled
 dist/
